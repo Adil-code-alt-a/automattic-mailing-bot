@@ -19,7 +19,7 @@ bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-QUEUE_FILE = "queue.json"
+QUEUE_FILE = "/data/queue.json"
 
 # Загрузка состояния из файла
 if os.path.exists(QUEUE_FILE):
