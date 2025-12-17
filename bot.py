@@ -70,21 +70,22 @@ async def start(message: types.Message):
     now = datetime.now(moscow_tz)
     await message.answer(
         f"Привет! Время МСК: {now.strftime('%H:%M %d.%m.%Y')}\n\n"
-        "Я твой планировщик постов в канал.\n\n"
-        "Как использовать:\n"
-        "• Напиши пост (текст, фото, видео, эмодзи)\n"
-        "• Напиши время публикации\n\n"
-        "Поддерживаю повторения:\n"
-        "• каждый день 09:00\n"
-        "• каждую пятницу 18:00\n"
-        "• 1-го числа 10:00\n\n"
+        "Напиши пост → укажи время → опубликую в канал.\n\n"
+        "Примеры времени:\n"
+        "• через 15 мин\n"
+        "• сегодня 8:00\n"
+        "• в 15:30\n"
+        "• 8:00 (сегодня или завтра)\n"
+        "• завтра 7:00\n"
+        "• завтра 23:59\n"
+        "• 31.12.2025 23:59\n"
+        "• 01.01.2026 00:01\n\n"
         "Команды:\n"
-        "/list — очередь постов\n"
-        "/status — статус и канал\n"
+        "/list — очередь\n"
+        "/status — статус\n"
         "/setchannel — сменить канал\n"
-        "/cancel <номер> — отменить\n"
-        "/now — опубликовать сразу\n"
-        "/help — справка"
+        "/cancel <номер>\n"
+        "/now — сразу"
     )
 
 @dp.message(Command("help"))
@@ -130,9 +131,8 @@ async def cmd_list(message: types.Message):
     text = "Твоя очередь постов:\n\n"
     for i, task in enumerate(tasks, 1):
         dt = task["time"]
-        repeat = " (повтор)" if task.get("repeat") else ""
         preview = task["preview"]
-        text += f"{i}. {dt.strftime('%d.%m %H:%M')}{repeat} — {preview}\n"
+        text += f"{i}. {dt.strftime('%d.%m %H:%M')} — {preview}\n"
     await message.answer(text)
 
 @dp.message(Command("cancel"))
@@ -188,71 +188,71 @@ async def process_time(message: types.Message, state: FSMContext):
     text = message.text.strip().lower()
     now = datetime.now(moscow_tz)
     dt = None
-    repeat = None
 
-    # Повторяющиеся посты
-    if "каждый день" in text or "ежедневно" in text:
-        repeat = "daily"
-        m = re.search(r"(\d{1,2}):(\d{2})", text)
-        if m:
-            h, m = int(m.group(1)), int(m.group(2))
+    # "через X"
+    if "через" in text:
+        mins = re.search(r"(\d+)\s*(мин|минут|м)", text)
+        hours = re.search(r"(\d+)\s*(час|часа|ч)", text)
+        if mins:
+            dt = now + timedelta(minutes=int(mins.group(1)))
+        elif hours:
+            dt = now + timedelta(hours=int(hours.group(1)))
+        else:
+            await message.reply("Не понял количество минут/часов")
+            return
+
+    # "завтра" + любое время
+    elif "завтра" in text:
+        tomorrow = now + timedelta(days=1)
+        time_match = re.search(r"(\d{1,2}):(\d{2})", text)
+        if time_match:
+            h = int(time_match.group(1))
+            m = int(time_match.group(2))
+            dt = tomorrow.replace(hour=h, minute=m, second=0, microsecond=0)
+        else:
+            await message.reply("Укажи время после 'завтра', например: завтра 7:00")
+            return
+
+    # "сегодня" + время или просто время "8:00"
+    elif "сегодня" in text or "в " in text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
+        time_match = re.search(r"(\d{1,2}):(\d{2})", text)
+        if time_match:
+            h = int(time_match.group(1))
+            m = int(time_match.group(2))
             dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
             if dt <= now:
-                dt += timedelta(days=1)
-    elif "каждую пятницу" in text:
-        repeat = "friday"
-        m = re.search(r"(\d{1,2}):(\d{2})", text)
-        h, m = 18, 0
-        if m:
-            h, m = int(m.group(1)), int(m.group(2))
-        days_ahead = (4 - now.weekday()) % 7
-        if days_ahead == 0:
-            days_ahead = 7
-        dt = (now + timedelta(days=days_ahead)).replace(hour=h, minute=m, second=0, microsecond=0)
-    elif "1-го числа" in text or "первого числа" in text:
-        repeat = "monthly"
-        m = re.search(r"(\d{1,2}):(\d{2})", text)
-        h, m = 10, 0
-        if m:
-            h, m = int(m.group(1)), int(m.group(2))
-        next_month = now.replace(day=28) + timedelta(days=4)
-        dt = next_month.replace(day=1, hour=h, minute=m, second=0, microsecond=0)
-
-    # Обычное время
-    if not dt:
-        if "через" in text:
-            mins = re.search(r"(\d+)\s*(мин|минут|м)", text)
-            hours = re.search(r"(\d+)\s*(час|часа|ч)", text)
-            if mins:
-                dt = now + timedelta(minutes=int(mins.group(1)))
-            elif hours:
-                dt = now + timedelta(hours=int(hours.group(1)))
-        elif "завтра" in text:
-            dt = now + timedelta(days=1)
-            m = re.search(r"(\d{1,2}):(\d{2})", text)
-            if m:
-                h, m = int(m.group(1)), int(m.group(2))
-                dt = dt.replace(hour=h, minute=m)
-            else:
-                dt = dt.replace(hour=9, minute=0)
+                dt += timedelta(days=1)  # если время прошло — на завтра
         else:
-            try:
-                naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
-                dt = naive_dt.replace(tzinfo=moscow_tz)
-            except ValueError:
-                await message.reply(
-                    "Не понял время.\n"
-                    "Примеры:\n"
-                    "через 15 мин\n"
-                    "завтра 7:00\n"
-                    "18.12.2025 14:30\n"
-                    "каждый день 09:00"
-                )
-                return
+            await message.reply("Укажи время, например: сегодня 8:00 или 8:00")
+            return
 
-    if dt <= now and not repeat:
-        await message.reply("Время уже прошло!")
+    # Полная дата + время
+    else:
+        try:
+            naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
+            dt = naive_dt.replace(tzinfo=moscow_tz)
+        except ValueError:
+            await message.reply(
+                "Не понял время.\n"
+                "Примеры:\n"
+                "через 15 мин\n"
+                "сегодня 8:00\n"
+                "в 15:30\n"
+                "8:00\n"
+                "завтра 7:00\n"
+                "завтра 23:59\n"
+                "31.12.2025 23:59\n"
+                "01.01.2026 00:01"
+            )
+            return
+
+    if dt <= now:
+        await message.reply("Время уже прошло или равно текущему!")
         return
+
+    delay = int((dt - now).total_seconds())
+    hours_left = delay // 3600
+    mins_left = (delay % 3600) // 60
 
     user_id = message.from_user.id
     if user_id not in scheduled_tasks:
@@ -268,26 +268,16 @@ async def process_time(message: types.Message, state: FSMContext):
     task = {
         "time": dt,
         "post": orig_post,
-        "preview": preview,
-        "repeat": repeat
+        "preview": preview
     }
     scheduled_tasks[user_id].append(task)
     task_index = len(scheduled_tasks[user_id]) - 1
 
     keyboard = get_task_keyboard(user_id, task_index)
 
-    hours_left = 0
-    mins_left = 0
-    if not repeat:
-        delay = int((dt - now).total_seconds())
-        hours_left = delay // 3600
-        mins_left = (delay % 3600) // 60
-
-    repeat_text = " (повторяющийся)" if repeat else ""
-
     await message.reply(
         f"Принято в работу! ✅\n"
-        f"Запланировано на {dt.strftime('%d.%m.%Y %H:%M')} (МСК){repeat_text}\n"
+        f"Запланировано на {dt.strftime('%d.%m.%Y %H:%M')} (МСК)\n"
         f"Осталось: {hours_left} ч {mins_left} мин\n"
         f"Позиция в очереди: {len(scheduled_tasks[user_id])}",
         reply_markup=keyboard
@@ -295,17 +285,16 @@ async def process_time(message: types.Message, state: FSMContext):
 
     await save_state()
 
-    if not repeat:
-        await asyncio.sleep(int((dt - now).total_seconds()))
+    await asyncio.sleep(delay)
 
-        channel = get_user_channel(user_id)
-        sent = await orig_post.copy_to(channel)
-        link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
+    channel = get_user_channel(user_id)
+    sent = await orig_post.copy_to(channel)
+    link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
 
-        await bot.send_message(user_id, f"Пост опубликован!\n{link}\nВремя: {dt.strftime('%H:%M %d.%m.%Y')} МСК")
+    await bot.send_message(user_id, f"Пост опубликован!\n{link}\nВремя: {dt.strftime('%H:%M %d.%m.%Y')} МСК")
 
-        scheduled_tasks[user_id].remove(task)
-        await save_state()
+    scheduled_tasks[user_id].remove(task)
+    await save_state()
 
 @dp.callback_query(lambda c: c.data and c.data.startswith(('pub_', 'can_', 'chg_')))
 async def callback_buttons(callback: types.CallbackQuery):
@@ -331,9 +320,8 @@ async def callback_buttons(callback: types.CallbackQuery):
         sent = await task["post"].copy_to(channel)
         link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
         await callback.message.edit_text(callback.message.text + f"\n\nПост опубликован сейчас!\n{link}")
-        if not task.get("repeat"):
-            del tasks[task_index]
-            await save_state()
+        del tasks[task_index]
+        await save_state()
     elif action == "can":
         del tasks[task_index]
         await save_state()
