@@ -13,40 +13,54 @@ import os
 import json
 import logging
 
+# Настройка логирования (видно в Railway logs)
 logging.basicConfig(level=logging.INFO)
 
+# Токен бота и ID канала по умолчанию
 TOKEN = os.getenv("TOKEN", "8560527789:AAF8r9Eo7MfIergU-OqhUW0hIi07hf1myAo")
 DEFAULT_CHANNEL_ID = "-1003452189598"
 
-WEBHOOK_HOST = "https://your-project.up.railway.app"  # Замените на ваш URL Railway
+# Webhook настройки для Railway
+WEBHOOK_HOST = "https://automattic-mailing-bot-production.up.railway.app"
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
+# Московское время
 moscow_tz = ZoneInfo("Europe/Moscow")
 
+# Инициализация бота и диспетчера
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# Файл для сохранения очереди и настроек
 QUEUE_FILE = "queue.json"
 
-# Загрузка состояния
+# Глобальные переменные
+scheduled_tasks = {}  # user_id -> list of tasks
+user_channels = {}    # user_id -> channel_id
+
+# Загрузка сохранённого состояния при запуске
 if os.path.exists(QUEUE_FILE):
     try:
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
         scheduled_tasks = {int(k): v for k, v in saved.get("tasks", {}).items()}
         user_channels = {int(k): v for k, v in saved.get("channels", {}).items()}
-    except:
+        logging.info("Очередь и настройки загружены из queue.json")
+    except Exception as e:
+        logging.error(f"Ошибка загрузки queue.json: {e}")
         scheduled_tasks = {}
         user_channels = {}
 else:
     scheduled_tasks = {}
     user_channels = {}
 
+# Функция получения канала пользователя
 def get_user_channel(user_id: int) -> str:
     return user_channels.get(user_id, DEFAULT_CHANNEL_ID)
 
+# Функция сохранения состояния
 async def save_state():
     try:
         data = {
@@ -55,13 +69,16 @@ async def save_state():
         }
         with open(QUEUE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, default=str)
-    except:
-        pass
+        logging.info("Очередь и настройки сохранены в queue.json")
+    except Exception as e:
+        logging.error(f"Ошибка сохранения queue.json: {e}")
 
+# Состояния FSM
 class Form(StatesGroup):
     waiting_time = State()
     setting_channel = State()
 
+# Клавиатура с кнопками для поста
 def get_task_keyboard(user_id: int, task_index: int):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -74,6 +91,7 @@ def get_task_keyboard(user_id: int, task_index: int):
     ])
     return keyboard
 
+# Команда /start и /help
 @dp.message(CommandStart())
 @dp.message(Command("help"))
 async def start(message: types.Message):
@@ -103,6 +121,7 @@ async def start(message: types.Message):
         "/help — эта справка"
     )
 
+# Команда /status
 @dp.message(Command("status"))
 async def status(message: types.Message):
     user_id = message.from_user.id
@@ -115,11 +134,13 @@ async def status(message: types.Message):
         f"Максимум: 20"
     )
 
+# Команда /setchannel
 @dp.message(Command("setchannel"))
 async def set_channel(message: types.Message, state: FSMContext):
     await state.set_state(Form.setting_channel)
     await message.answer("Перешлите сообщение из нужного канала")
 
+# Обработка смены канала
 @dp.message(Form.setting_channel)
 async def process_channel(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -132,6 +153,7 @@ async def process_channel(message: types.Message, state: FSMContext):
         await message.answer("Не распознал канал. Перешлите сообщение из канала")
     await state.clear()
 
+# Команда /list
 @dp.message(Command("list"))
 async def cmd_list(message: types.Message):
     user_id = message.from_user.id
@@ -146,6 +168,7 @@ async def cmd_list(message: types.Message):
         text += f"{i}. {dt.strftime('%d.%m %H:%M')} — {preview}\n"
     await message.answer(text)
 
+# Команда /cancel
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message):
     try:
@@ -161,6 +184,7 @@ async def cmd_cancel(message: types.Message):
     except:
         await message.answer("Использование: /cancel <номер из /list>")
 
+# Команда /now
 @dp.message(Command("now"))
 async def cmd_now(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -174,6 +198,7 @@ async def cmd_now(message: types.Message, state: FSMContext):
     await message.answer(f"Пост опубликован сразу!\n{link}")
     await state.clear()
 
+# Приём поста
 @dp.message()
 async def receive_post(message: types.Message, state: FSMContext):
     current = await state.get_state()
@@ -195,6 +220,7 @@ async def receive_post(message: types.Message, state: FSMContext):
 
     await message.reply(f"Пост принят: \"{preview}\"\nТеперь укажите время публикации")
 
+# Обработка времени
 async def process_time(message: types.Message, state: FSMContext):
     text = message.text.strip()
     lower_text = text.lower()
@@ -299,6 +325,7 @@ async def process_time(message: types.Message, state: FSMContext):
 
     await state.clear()
 
+# Фоновая публикация поста
 async def publish_task(task, user_id):
     dt = task["time"]
     now = datetime.now(moscow_tz)
@@ -319,6 +346,7 @@ async def publish_task(task, user_id):
         scheduled_tasks[user_id].remove(task)
         await save_state()
 
+# Обработка кнопок
 @dp.callback_query(lambda c: c.data and c.data.startswith(('pub_', 'can_', 'chg_')))
 async def callback_buttons(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -360,12 +388,18 @@ app = web.Application()
 SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
 
 async def on_startup(app):
-    await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook установлен: {WEBHOOK_URL}")
+    try:
+        await bot.set_webhook(WEBHOOK_URL)
+        logging.info(f"Webhook установлен: {WEBHOOK_URL}")
+    except Exception as e:
+        logging.error(f"Ошибка установки webhook: {e}")
 
 async def on_shutdown(app):
-    await bot.delete_webhook()
-    logging.info("Webhook удалён")
+    try:
+        await bot.delete_webhook()
+        logging.info("Webhook удалён")
+    except Exception as e:
+        logging.error(f"Ошибка удаления webhook: {e}")
 
 app.on_startup.append(on_startup)
 app.on_shutdown.append(on_shutdown)
