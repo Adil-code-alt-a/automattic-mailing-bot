@@ -26,9 +26,9 @@ if os.path.exists(QUEUE_FILE):
     try:
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
-        scheduled_tasks = {int(k): [task for task in v if task] for k, v in saved.get("tasks", {}).items()}
+        scheduled_tasks = {int(k): v for k, v in saved.get("tasks", {}).items()}
         user_channels = {int(k): v for k, v in saved.get("channels", {}).items()}
-    except Exception:
+    except:
         scheduled_tasks = {}
         user_channels = {}
 else:
@@ -46,8 +46,8 @@ async def save_state():
         }
         with open(QUEUE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, default=str)
-    except Exception:
-        pass  # если не удалось сохранить — продолжаем работать
+    except:
+        pass
 
 class Form(StatesGroup):
     waiting_time = State()
@@ -73,17 +73,17 @@ async def start(message: types.Message):
         "Я твой планировщик постов в канал.\n\n"
         "Как использовать:\n"
         "• Напиши пост (текст, фото, видео, эмодзи)\n"
-        "• Напиши время\n\n"
+        "• Напиши время публикации\n\n"
         "Поддерживаю повторения:\n"
         "• каждый день 09:00\n"
         "• каждую пятницу 18:00\n"
         "• 1-го числа 10:00\n\n"
         "Команды:\n"
-        "/list — очередь\n"
-        "/status — статус\n"
+        "/list — очередь постов\n"
+        "/status — статус и канал\n"
         "/setchannel — сменить канал\n"
-        "/cancel <номер>\n"
-        "/now — сразу\n"
+        "/cancel <номер> — отменить\n"
+        "/now — опубликовать сразу\n"
         "/help — справка"
     )
 
@@ -190,7 +190,7 @@ async def process_time(message: types.Message, state: FSMContext):
     dt = None
     repeat = None
 
-    # Повторяющиеся
+    # Повторяющиеся посты
     if "каждый день" in text or "ежедневно" in text:
         repeat = "daily"
         m = re.search(r"(\d{1,2}):(\d{2})", text)
@@ -240,7 +240,14 @@ async def process_time(message: types.Message, state: FSMContext):
                 naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
                 dt = naive_dt.replace(tzinfo=moscow_tz)
             except ValueError:
-                await message.reply("Не понял время. Примеры:\nчерез 15 мин\nзавтра 7:00\n18.12.2025 14:30\nкаждый день 09:00")
+                await message.reply(
+                    "Не понял время.\n"
+                    "Примеры:\n"
+                    "через 15 мин\n"
+                    "завтра 7:00\n"
+                    "18.12.2025 14:30\n"
+                    "каждый день 09:00"
+                )
                 return
 
     if dt <= now and not repeat:
@@ -280,7 +287,7 @@ async def process_time(message: types.Message, state: FSMContext):
 
     await message.reply(
         f"Принято в работу! ✅\n"
-        f"Запланировано на {dt.strftime('%d.%m %H:%M')} (МСК){repeat_text}\n"
+        f"Запланировано на {dt.strftime('%d.%m.%Y %H:%M')} (МСК){repeat_text}\n"
         f"Осталось: {hours_left} ч {mins_left} мин\n"
         f"Позиция в очереди: {len(scheduled_tasks[user_id])}",
         reply_markup=keyboard
@@ -333,7 +340,6 @@ async def callback_buttons(callback: types.CallbackQuery):
         await callback.message.edit_text(callback.message.text + "\n\nПост отменён")
     elif action == "chg":
         await callback.message.edit_text(callback.message.text + "\n\nНапиши новое время для этого поста")
-        # Можно добавить полноценное редактирование позже
 
     await callback.answer()
 
