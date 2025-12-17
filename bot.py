@@ -28,7 +28,8 @@ if os.path.exists(QUEUE_FILE):
             saved = json.load(f)
         scheduled_tasks = {int(k): v for k, v in saved.get("tasks", {}).items()}
         user_channels = {int(k): v for k, v in saved.get("channels", {}).items()}
-    except:
+    except Exception as e:
+        print(f"Ошибка загрузки queue.json: {e}")
         scheduled_tasks = {}
         user_channels = {}
 else:
@@ -46,8 +47,8 @@ async def save_state():
         }
         with open(QUEUE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, default=str)
-    except:
-        pass
+    except Exception as e:
+        print(f"Ошибка сохранения queue.json: {e}")
 
 class Form(StatesGroup):
     waiting_time = State()
@@ -70,20 +71,24 @@ async def start(message: types.Message):
     now = datetime.now(moscow_tz)
     await message.answer(
         f"Привет! Время МСК: {now.strftime('%H:%M %d.%m.%Y')}\n\n"
-        "Напиши пост → укажи время → опубликую в канал.\n\n"
+        "Напиши пост (текст, фото, видео, эмодзи) — я приму.\n"
+        "Потом напиши время публикации.\n\n"
         "Примеры времени:\n"
         "• через 15 мин\n"
+        "• через 2 часа\n"
         "• сегодня 8:00\n"
-        "• в 8:00\n"
-        "• 8:00\n"
+        "• в 15:30\n"
+        "• 8:00 (сегодня или завтра)\n"
         "• завтра 7:00\n"
+        "• завтра 23:59\n"
         "• 18.12.2025 14:30\n\n"
         "Команды:\n"
-        "/list — очередь\n"
-        "/status — статус\n"
+        "/list — очередь постов\n"
+        "/status — статус и канал\n"
         "/setchannel — сменить канал\n"
-        "/cancel <номер> отменить\n"
-        "/now — сразу"
+        "/cancel <номер> — отменить пост\n"
+        "/now — опубликовать текущий пост сразу\n"
+        "/help — эта справка"
     )
 
 @dp.message(Command("help"))
@@ -212,15 +217,15 @@ async def process_time(message: types.Message, state: FSMContext):
             await message.reply("Укажи время после 'завтра', например: завтра 7:00")
             return
 
-    # "сегодня" + время или просто время "8:07" или "в 8:07"
+    # "сегодня" + время или "в " + время или просто время "8:07"
     elif "сегодня" in lower_text or "в " in lower_text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
         if time_match:
             h = int(time_match.group(1))
             m = int(time_match.group(2))
             dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if dt <= now:
-                dt += timedelta(days=1)  # если время прошло — на завтра
+            if dt < now - timedelta(minutes=1):  # если время уже сильно прошло — на завтра
+                dt += timedelta(days=1)
         else:
             await message.reply("Укажи время, например: сегодня 8:07 или 8:07")
             return
@@ -243,8 +248,8 @@ async def process_time(message: types.Message, state: FSMContext):
             )
             return
 
-    if dt <= now:
-        await message.reply("Время уже прошло или равно текущему!")
+    if dt < now - timedelta(minutes=1):
+        await message.reply("Время уже прошло!")
         return
 
     delay = int((dt - now).total_seconds())
