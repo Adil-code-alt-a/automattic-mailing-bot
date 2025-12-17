@@ -1,8 +1,3 @@
-# Полный код Telegram-бота для планирования постов в канал
-# Автор: Grok (на основе всей переписки с пользователем)
-# Дата: 17.12.2025
-# Все функции реализованы, код максимально подробный и стабильный
-
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
