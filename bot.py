@@ -250,14 +250,17 @@ async def process_time(message: types.Message, state: FSMContext):
             return
 
     # "сегодня" + время или "в " + время или просто время "8:07"
-    elif "сегодня" in lower_text or "в " in lower_text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
-        time_match = re.search(r"(\d{1,2}):(\d{2})", text)
-        if time_match:
-            h = int(time_match.group(1))
-            m = int(time_match.group(2))
-            dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if dt <= now:
-                dt += timedelta(days=1)  # если время прошло — на завтра
+   elif "сегодня" in lower_text or "в " in lower_text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
+    time_match = re.search(r"(\d{1,2}):(\d{2})", text)
+    if time_match:
+        h = int(time_match.group(1))
+        m = int(time_match.group(2))
+        dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if dt < now - timedelta(minutes=1):  # если время уже прошло более чем на 1 минуту — на завтра
+            dt += timedelta(days=1)
+    else:
+        await message.reply("Укажите время, например: сегодня 8:42 или 8:42")
+        return
         else:
             await message.reply("Укажите время, например: сегодня 8:07 или 8:07")
             return
