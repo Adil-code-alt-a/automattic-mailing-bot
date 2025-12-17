@@ -249,17 +249,19 @@ async def process_time(message: types.Message, state: FSMContext):
             await message.reply("Укажите время после 'завтра', например: завтра 7:00")
             return
 
-    # "сегодня" + время или "в " + время или просто время "8:07"
+        # Обработка форматов "сегодня HH:MM", "в HH:MM" или просто "HH:MM"
     elif "сегодня" in lower_text or "в " in lower_text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
         if time_match:
             h = int(time_match.group(1))
             m = int(time_match.group(2))
             dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if dt <= now:
-                dt += timedelta(days=1)  # если время прошло — на завтра
+            # Перенос на завтра только если указанное время уже прошло более чем на 1 минуту
+            # (запас позволяет корректно обрабатывать ввод времени, близкого к текущему)
+            if dt < now - timedelta(minutes=1):
+                dt += timedelta(days=1)
         else:
-            await message.reply("Укажите время, например: сегодня 8:07 или 8:07")
+            await message.reply("Укажите время в формате часы:минуты, например: сегодня 9:00 или 9:00")
             return
 
     # Полная дата + время
