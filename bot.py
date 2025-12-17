@@ -3,6 +3,8 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler
+from aiohttp import web
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import asyncio
@@ -11,33 +13,31 @@ import os
 import json
 import logging
 
-# Логирование для отладки (видно в Railway logs)
 logging.basicConfig(level=logging.INFO)
 
-# Токен и канал по умолчанию
 TOKEN = os.getenv("TOKEN", "8560527789:AAF8r9Eo7MfIergU-OqhUW0hIi07hf1myAo")
 DEFAULT_CHANNEL_ID = "-1003452189598"
 
-# Московское время
+WEBHOOK_HOST = "https://your-project.up.railway.app"  # Замените на ваш URL Railway
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
 moscow_tz = ZoneInfo("Europe/Moscow")
 
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Файл сохранения очереди и каналов
 QUEUE_FILE = "queue.json"
 
-# Загрузка состояния при запуске
+# Загрузка состояния
 if os.path.exists(QUEUE_FILE):
     try:
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
         scheduled_tasks = {int(k): v for k, v in saved.get("tasks", {}).items()}
         user_channels = {int(k): v for k, v in saved.get("channels", {}).items()}
-        logging.info("Состояние загружено из queue.json")
-    except Exception as e:
-        logging.error(f"Ошибка загрузки queue.json: {e}")
+    except:
         scheduled_tasks = {}
         user_channels = {}
 else:
@@ -55,9 +55,8 @@ async def save_state():
         }
         with open(QUEUE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, default=str)
-        logging.info("Состояние сохранено в queue.json")
-    except Exception as e:
-        logging.error(f"Ошибка сохранения queue.json: {e}")
+    except:
+        pass
 
 class Form(StatesGroup):
     waiting_time = State()
@@ -233,7 +232,6 @@ async def process_time(message: types.Message, state: FSMContext):
             h = int(time_match.group(1))
             m = int(time_match.group(2))
             dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            # Перенос на завтра только если время уже прошло более чем на 1 минуту
             if dt < now - timedelta(minutes=1):
                 dt += timedelta(days=1)
         else:
@@ -297,7 +295,6 @@ async def process_time(message: types.Message, state: FSMContext):
 
     await save_state()
 
-    # Фоновая публикация
     asyncio.create_task(publish_task(task, user_id))
 
     await state.clear()
@@ -357,9 +354,21 @@ async def callback_buttons(callback: types.CallbackQuery):
 
     await callback.answer()
 
-async def main():
-    logging.info("Бот запущен")
-    await dp.start_polling(bot)
+# Webhook сервер
+app = web.Application()
+
+SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
+
+async def on_startup(app):
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info(f"Webhook установлен: {WEBHOOK_URL}")
+
+async def on_shutdown(app):
+    await bot.delete_webhook()
+    logging.info("Webhook удалён")
+
+app.on_startup.append(on_startup)
+app.on_shutdown.append(on_shutdown)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
