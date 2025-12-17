@@ -25,10 +25,10 @@ bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Файл сохранения
+# Файл сохранения очереди и каналов
 QUEUE_FILE = "queue.json"
 
-# Очередь и каналы
+# Загрузка состояния при запуске
 if os.path.exists(QUEUE_FILE):
     try:
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
@@ -82,8 +82,8 @@ async def start(message: types.Message):
     await message.answer(
         f"Привет! Время МСК: {now.strftime('%H:%M %d.%m.%Y')}\n\n"
         "Напишите пост — я приму.\n"
-        "Потом укажите время.\n\n"
-        "Форматы времени:\n"
+        "Потом укажите время публикации.\n\n"
+        "Примеры времени:\n"
         "• через 15 мин\n"
         "• сегодня 8:00\n"
         "• в 15:30\n"
@@ -227,6 +227,7 @@ async def process_time(message: types.Message, state: FSMContext):
             h = int(time_match.group(1))
             m = int(time_match.group(2))
             dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            # Перенос на завтра только если время уже прошло более чем на 1 минуту
             if dt < now - timedelta(minutes=1):
                 dt += timedelta(days=1)
         else:
@@ -290,7 +291,7 @@ async def process_time(message: types.Message, state: FSMContext):
 
     await save_state()
 
-    # Запуск публикации в фоне — не блокируем бота
+    # Фоновая публикация
     asyncio.create_task(publish_task(task, user_id))
 
     await state.clear()
