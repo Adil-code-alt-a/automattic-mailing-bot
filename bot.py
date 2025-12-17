@@ -73,13 +73,11 @@ async def start(message: types.Message):
         "Напиши пост → укажи время → опубликую в канал.\n\n"
         "Примеры времени:\n"
         "• через 15 мин\n"
-        "• сегодня 8:00\n"
-        "• в 15:30\n"
-        "• 8:00 (сегодня или завтра)\n"
+        "• сегодня 8:07\n"
+        "• в 8:07\n"
+        "• 8:07\n"
         "• завтра 7:00\n"
-        "• завтра 23:59\n"
-        "• 31.12.2025 23:59\n"
-        "• 01.01.2026 00:01\n\n"
+        "• 18.12.2025 14:30\n\n"
         "Команды:\n"
         "/list — очередь\n"
         "/status — статус\n"
@@ -185,24 +183,25 @@ async def receive_post(message: types.Message, state: FSMContext):
     await message.reply(f"Пост принят: \"{preview}\"\nТеперь напиши время публикации")
 
 async def process_time(message: types.Message, state: FSMContext):
-    text = message.text.strip().lower()
+    text = message.text.strip()
+    lower_text = text.lower()
     now = datetime.now(moscow_tz)
     dt = None
 
     # "через X"
-    if "через" in text:
-        mins = re.search(r"(\d+)\s*(мин|минут|м)", text)
-        hours = re.search(r"(\d+)\s*(час|часа|ч)", text)
+    if "через" in lower_text:
+        mins = re.search(r"(\d+)\s*(мин|минут|м)", lower_text)
+        hours = re.search(r"(\d+)\s*(час|часа|ч)", lower_text)
         if mins:
             dt = now + timedelta(minutes=int(mins.group(1)))
         elif hours:
             dt = now + timedelta(hours=int(hours.group(1)))
         else:
-            await message.reply("Не понял количество минут/часов")
+            await message.reply("Не понял количество минут или часов")
             return
 
-    # "завтра" + любое время
-    elif "завтра" in text:
+    # "завтра" + время
+    elif "завтра" in lower_text:
         tomorrow = now + timedelta(days=1)
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
         if time_match:
@@ -213,8 +212,8 @@ async def process_time(message: types.Message, state: FSMContext):
             await message.reply("Укажи время после 'завтра', например: завтра 7:00")
             return
 
-    # "сегодня" + время или просто время "8:00"
-    elif "сегодня" in text or "в " in text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
+    # "сегодня" + время или просто время "8:07" или "в 8:07"
+    elif "сегодня" in lower_text or "в " in lower_text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
         if time_match:
             h = int(time_match.group(1))
@@ -223,7 +222,7 @@ async def process_time(message: types.Message, state: FSMContext):
             if dt <= now:
                 dt += timedelta(days=1)  # если время прошло — на завтра
         else:
-            await message.reply("Укажи время, например: сегодня 8:00 или 8:00")
+            await message.reply("Укажи время, например: сегодня 8:07 или 8:07")
             return
 
     # Полная дата + время
@@ -236,13 +235,11 @@ async def process_time(message: types.Message, state: FSMContext):
                 "Не понял время.\n"
                 "Примеры:\n"
                 "через 15 мин\n"
-                "сегодня 8:00\n"
-                "в 15:30\n"
-                "8:00\n"
+                "сегодня 8:07\n"
+                "в 8:07\n"
+                "8:07\n"
                 "завтра 7:00\n"
-                "завтра 23:59\n"
-                "31.12.2025 23:59\n"
-                "01.01.2026 00:01"
+                "18.12.2025 14:30"
             )
             return
 
