@@ -1,8 +1,3 @@
-# Полный код Telegram-бота для планирования постов в канал
-# Автор: Grok (на основе всей переписки с пользователем)
-# Дата: 17.12.2025
-# Все функции реализованы, код максимально подробный и стабильный
-
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -16,36 +11,31 @@ import os
 import json
 import logging
 
-# Настройка логирования для отладки (видно в Railway logs)
+# Логирование для отладки (видно в Railway logs)
 logging.basicConfig(level=logging.INFO)
 
-# Токен бота и ID канала по умолчанию
+# Токен и канал по умолчанию
 TOKEN = os.getenv("TOKEN", "8560527789:AAF8r9Eo7MfIergU-OqhUW0hIi07hf1myAo")
 DEFAULT_CHANNEL_ID = "-1003452189598"
 
-# Московское время — всегда точно
+# Московское время
 moscow_tz = ZoneInfo("Europe/Moscow")
 
-# Инициализация бота и диспетчера
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Файл для сохранения очереди и настроек
+# Файл сохранения
 QUEUE_FILE = "queue.json"
 
-# Глобальные переменные для очереди и каналов
-scheduled_tasks = {}  # user_id -> list of tasks
-user_channels = {}    # user_id -> channel_id
-
-# Загрузка сохранённого состояния при запуске
+# Очередь и каналы
 if os.path.exists(QUEUE_FILE):
     try:
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
         scheduled_tasks = {int(k): v for k, v in saved.get("tasks", {}).items()}
         user_channels = {int(k): v for k, v in saved.get("channels", {}).items()}
-        logging.info("Очередь и настройки загружены из queue.json")
+        logging.info("Состояние загружено из queue.json")
     except Exception as e:
         logging.error(f"Ошибка загрузки queue.json: {e}")
         scheduled_tasks = {}
@@ -54,11 +44,9 @@ else:
     scheduled_tasks = {}
     user_channels = {}
 
-# Функция получения канала пользователя
 def get_user_channel(user_id: int) -> str:
     return user_channels.get(user_id, DEFAULT_CHANNEL_ID)
 
-# Функция сохранения состояния
 async def save_state():
     try:
         data = {
@@ -67,16 +55,14 @@ async def save_state():
         }
         with open(QUEUE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, default=str)
-        logging.info("Очередь и настройки сохранены в queue.json")
+        logging.info("Состояние сохранено в queue.json")
     except Exception as e:
         logging.error(f"Ошибка сохранения queue.json: {e}")
 
-# Состояния FSM
 class Form(StatesGroup):
     waiting_time = State()
     setting_channel = State()
 
-# Клавиатура с кнопками для поста
 def get_task_keyboard(user_id: int, task_index: int):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -89,56 +75,46 @@ def get_task_keyboard(user_id: int, task_index: int):
     ])
     return keyboard
 
-# Команда /start и /help
 @dp.message(CommandStart())
 @dp.message(Command("help"))
 async def start(message: types.Message):
     now = datetime.now(moscow_tz)
     await message.answer(
-        f"Привет! Текущее время МСК: {now.strftime('%H:%M %d.%m.%Y')}\n\n"
-        "Я — ваш личный планировщик постов в Telegram-канал.\n\n"
-        "Как использовать:\n"
-        "1. Напишите пост (текст, фото, видео, эмодзи — всё сразу)\n"
-        "2. Укажите время публикации\n\n"
-        "Поддерживаемые форматы времени:\n"
+        f"Привет! Время МСК: {now.strftime('%H:%M %d.%m.%Y')}\n\n"
+        "Напишите пост — я приму.\n"
+        "Потом укажите время.\n\n"
+        "Форматы времени:\n"
         "• через 15 мин\n"
-        "• через 2 часа\n"
         "• сегодня 8:00\n"
         "• в 15:30\n"
-        "• 8:00 (сегодня или завтра)\n"
+        "• 8:00\n"
         "• завтра 7:00\n"
-        "• завтра 23:59\n"
-        "• 31.12.2025 23:59\n"
-        "• 01.01.2026 00:01\n\n"
+        "• 18.12.2025 14:30\n\n"
         "Команды:\n"
-        "/list — посмотреть очередь постов\n"
-        "/status — статус и текущий канал\n"
-        "/setchannel — сменить канал публикации\n"
-        "/cancel <номер> — отменить пост\n"
-        "/now — опубликовать текущий пост сразу\n"
-        "/help — эта справка"
+        "/list — очередь\n"
+        "/status — статус\n"
+        "/setchannel — смена канала\n"
+        "/cancel <номер>\n"
+        "/now — сразу"
     )
 
-# Команда /status
 @dp.message(Command("status"))
 async def status(message: types.Message):
     user_id = message.from_user.id
     tasks_count = len(scheduled_tasks.get(user_id, []))
     channel = get_user_channel(user_id)
     await message.answer(
-        f"Статус бота:\n"
-        f"Текущий канал: {channel}\n"
+        f"Статус:\n"
+        f"Канал: {channel}\n"
         f"Постов в очереди: {tasks_count}\n"
-        f"Максимум постов в очереди: 20"
+        f"Максимум: 20"
     )
 
-# Команда /setchannel
 @dp.message(Command("setchannel"))
 async def set_channel(message: types.Message, state: FSMContext):
     await state.set_state(Form.setting_channel)
-    await message.answer("Для смены канала перешлите мне любое сообщение из нужного канала.")
+    await message.answer("Перешлите сообщение из нужного канала")
 
-# Обработка смены канала
 @dp.message(Form.setting_channel)
 async def process_channel(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -146,27 +122,25 @@ async def process_channel(message: types.Message, state: FSMContext):
         new_channel = str(message.forward_from_chat.id)
         user_channels[user_id] = new_channel
         await save_state()
-        await message.answer(f"Канал успешно изменён на {new_channel}")
+        await message.answer(f"Канал изменён на {new_channel}")
     else:
-        await message.answer("Не удалось распознать канал. Перешлите сообщение из нужного канала.")
+        await message.answer("Не распознал канал. Перешлите сообщение из канала")
     await state.clear()
 
-# Команда /list
 @dp.message(Command("list"))
 async def cmd_list(message: types.Message):
     user_id = message.from_user.id
     tasks = scheduled_tasks.get(user_id, [])
     if not tasks:
-        await message.answer("Очередь пуста.")
+        await message.answer("Очередь пуста")
         return
-    text = "Ваша очередь постов:\n\n"
+    text = "Очередь постов:\n\n"
     for i, task in enumerate(tasks, 1):
         dt = task["time"]
         preview = task["preview"]
         text += f"{i}. {dt.strftime('%d.%m %H:%M')} — {preview}\n"
     await message.answer(text)
 
-# Команда /cancel
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message):
     try:
@@ -176,27 +150,25 @@ async def cmd_cancel(message: types.Message):
         if 0 <= num < len(tasks):
             del tasks[num]
             await save_state()
-            await message.answer(f"Пост №{num + 1} успешно отменён.")
+            await message.answer(f"Пост №{num + 1} отменён")
         else:
-            await message.answer("Неверный номер поста.")
+            await message.answer("Неверный номер")
     except:
         await message.answer("Использование: /cancel <номер из /list>")
 
-# Команда /now
 @dp.message(Command("now"))
 async def cmd_now(message: types.Message, state: FSMContext):
     data = await state.get_data()
     if "post" not in data:
-        await message.answer("Сначала отправьте пост для публикации.")
+        await message.answer("Сначала отправьте пост")
         return
     post = data["post"]
     channel = get_user_channel(message.from_user.id)
     sent = await post.copy_to(channel)
     link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
-    await message.answer(f"Пост опубликован сразу в канал!\n{link}")
+    await message.answer(f"Пост опубликован сразу!\n{link}")
     await state.clear()
 
-# Приём любого сообщения (пост или время)
 @dp.message()
 async def receive_post(message: types.Message, state: FSMContext):
     current = await state.get_state()
@@ -206,7 +178,7 @@ async def receive_post(message: types.Message, state: FSMContext):
 
     user_id = message.from_user.id
     if len(scheduled_tasks.get(user_id, [])) >= 20:
-        await message.answer("Очередь полная (максимум 20 постов).")
+        await message.answer("Очередь полная (максимум 20 постов)")
         return
 
     await state.set_state(Form.waiting_time)
@@ -216,9 +188,8 @@ async def receive_post(message: types.Message, state: FSMContext):
     if len(preview) > 40:
         preview = preview[:40] + "..."
 
-    await message.reply(f"Пост принят: \"{preview}\"\nТеперь укажите время публикации.")
+    await message.reply(f"Пост принят: \"{preview}\"\nТеперь укажите время публикации")
 
-# Обработка времени
 async def process_time(message: types.Message, state: FSMContext):
     text = message.text.strip()
     lower_text = text.lower()
@@ -234,7 +205,7 @@ async def process_time(message: types.Message, state: FSMContext):
         elif hours:
             dt = now + timedelta(hours=int(hours.group(1)))
         else:
-            await message.reply("Не понял количество минут или часов.")
+            await message.reply("Не понял количество минут или часов")
             return
 
     # "завтра" + время
@@ -249,19 +220,17 @@ async def process_time(message: types.Message, state: FSMContext):
             await message.reply("Укажите время после 'завтра', например: завтра 7:00")
             return
 
-        # Обработка форматов "сегодня HH:MM", "в HH:MM" или просто "HH:MM"
+    # "сегодня" + время или "в " + время или просто "8:07"
     elif "сегодня" in lower_text or "в " in lower_text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
         if time_match:
             h = int(time_match.group(1))
             m = int(time_match.group(2))
             dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            # Перенос на завтра только если указанное время уже прошло более чем на 1 минуту
-            # (запас позволяет корректно обрабатывать ввод времени, близкого к текущему)
             if dt < now - timedelta(minutes=1):
                 dt += timedelta(days=1)
         else:
-            await message.reply("Укажите время в формате часы:минуты, например: сегодня 9:00 или 9:00")
+            await message.reply("Укажите время, например: сегодня 9:00 или 9:00")
             return
 
     # Полная дата + время
@@ -274,16 +243,16 @@ async def process_time(message: types.Message, state: FSMContext):
                 "Не понял время.\n"
                 "Примеры:\n"
                 "через 15 мин\n"
-                "сегодня 8:07\n"
-                "в 8:07\n"
-                "8:07\n"
+                "сегодня 9:00\n"
+                "в 9:00\n"
+                "9:00\n"
                 "завтра 7:00\n"
                 "18.12.2025 14:30"
             )
             return
 
-    if dt <= now:
-        await message.reply("Время уже прошло или равно текущему!")
+    if dt < now - timedelta(minutes=1):
+        await message.reply("Время уже прошло!")
         return
 
     delay = int((dt - now).total_seconds())
@@ -321,18 +290,31 @@ async def process_time(message: types.Message, state: FSMContext):
 
     await save_state()
 
-    await asyncio.sleep(delay)
+    # Запуск публикации в фоне — не блокируем бота
+    asyncio.create_task(publish_task(task, user_id))
+
+    await state.clear()
+
+async def publish_task(task, user_id):
+    dt = task["time"]
+    now = datetime.now(moscow_tz)
+    delay = max(0, int((dt - now).total_seconds()))
+    
+    if delay > 0:
+        await asyncio.sleep(delay)
 
     channel = get_user_channel(user_id)
-    sent = await orig_post.copy_to(channel)
-    link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
+    try:
+        sent = await task["post"].copy_to(channel)
+        link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
+        await bot.send_message(user_id, f"Пост опубликован!\n{link}\nВремя: {dt.strftime('%H:%M %d.%m.%Y')} МСК")
+    except Exception as e:
+        await bot.send_message(user_id, f"Ошибка публикации: {e}")
 
-    await bot.send_message(user_id, f"Пост опубликован!\n{link}\nВремя: {dt.strftime('%H:%M %d.%m.%Y')} МСК")
+    if user_id in scheduled_tasks and task in scheduled_tasks[user_id]:
+        scheduled_tasks[user_id].remove(task)
+        await save_state()
 
-    scheduled_tasks[user_id].remove(task)
-    await save_state()
-
-# Обработка кнопок
 @dp.callback_query(lambda c: c.data and c.data.startswith(('pub_', 'can_', 'chg_')))
 async def callback_buttons(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -368,7 +350,6 @@ async def callback_buttons(callback: types.CallbackQuery):
 
     await callback.answer()
 
-# Запуск бота
 async def main():
     logging.info("Бот запущен")
     await dp.start_polling(bot)
