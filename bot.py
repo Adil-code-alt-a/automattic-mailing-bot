@@ -82,7 +82,7 @@ async def start(message: types.Message):
         "/list — очередь\n"
         "/status — статус\n"
         "/setchannel — сменить канал\n"
-        "/cancel <номер>\n"
+        "/cancel <номер> отменить\n"
         "/now — сразу"
     )
 
