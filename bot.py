@@ -264,7 +264,7 @@ async def process_time(message: types.Message, state: FSMContext):
             await message.reply("Укажите время, например: сегодня 9:00 или 9:00")
             return
 
-        # Полная дата + время (последний вариант парсинга)
+           # Полная дата + время (последний вариант парсинга)
     else:
         try:
             naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
@@ -282,13 +282,13 @@ async def process_time(message: types.Message, state: FSMContext):
             )
             return
 
-    # Если время успешно распознано — сразу отправляем подтверждение (для всех форматов)
+    # Унифицированная обработка после любого успешного распознавания времени
     if dt is not None:
-        delay = int((dt - now).total_seconds())
-        if delay < 0:
+        if dt < now - timedelta(minutes=1):
             await message.reply("Время уже прошло!")
             return
 
+        delay = int((dt - now).total_seconds())
         hours_left = delay // 3600
         mins_left = (delay % 3600) // 60
 
@@ -323,7 +323,7 @@ async def process_time(message: types.Message, state: FSMContext):
 
         await save_state()
 
-        # Запуск публикации в фоне
+        # Фоновая публикация
         asyncio.create_task(publish_task(task, user_id))
 
         await state.clear()
