@@ -380,7 +380,7 @@ async def publish_task(task, user_id):
         delay = int((dt - now).total_seconds())
         if delay <= 0:
             break  # Время пришло или прошло — публикуем
-        # Спим по 60 секунд, чтобы часто проверять время (устойчивость к перезапускам)
+        # Спим максимум 60 секунд, чтобы часто проверять (устойчивость к перезапускам)
         await asyncio.sleep(min(delay, 60))
 
     channel = get_user_channel(user_id)
@@ -391,7 +391,7 @@ async def publish_task(task, user_id):
     except Exception as e:
         await bot.send_message(user_id, f"Ошибка публикации поста: {e}")
 
-    # Удаление из очереди после публикации
+    # Удаление из очереди
     if user_id in scheduled_tasks and task in scheduled_tasks[user_id]:
         scheduled_tasks[user_id].remove(task)
         await save_state()
