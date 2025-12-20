@@ -34,7 +34,7 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # Файл для сохранения очереди и настроек
-QUEUE_FILE = "queue.json"
+QUEUE_FILE = "/data/queue.json"
 
 # Глобальные переменные
 scheduled_tasks = {}  # user_id -> list of tasks
