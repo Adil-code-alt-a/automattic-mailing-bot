@@ -227,16 +227,18 @@ async def process_time(message: types.Message, state: FSMContext):
     now = datetime.now(moscow_tz)
     dt = None
 
-    # "через X"
+        # "через X" (полная поддержка склонений минут и часов)
     if "через" in lower_text:
-        mins = re.search(r"(\d+)\s*(мин|минут|м)", lower_text)
-        hours = re.search(r"(\d+)\s*(час|часа|ч)", lower_text)
-        if mins:
-            dt = now + timedelta(minutes=int(mins.group(1)))
-        elif hours:
-            dt = now + timedelta(hours=int(hours.group(1)))
+        # Минуты: мин, минут, минуту, минуты, м
+        mins_match = re.search(r"(\d+)\s*(мин|минут|минуту|минуты|м)", lower_text)
+        # Часы: час, часа, часов, ч
+        hours_match = re.search(r"(\d+)\s*(час|часа|часов|ч)", lower_text)
+        if mins_match:
+            dt = now + timedelta(minutes=int(mins_match.group(1)))
+        elif hours_match:
+            dt = now + timedelta(hours=int(hours_match.group(1)))
         else:
-            await message.reply("Не понял количество минут или часов")
+            await message.reply("Не понял количество минут или часов. Примеры: через 15 мин, через 1 минуту, через 2 часа")
             return
 
     # "завтра" + время
