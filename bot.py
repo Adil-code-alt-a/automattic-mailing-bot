@@ -264,7 +264,7 @@ async def process_time(message: types.Message, state: FSMContext):
             await message.reply("Укажите время, например: сегодня 9:00 или 9:00")
             return
 
-      # Полная дата + время (последний вариант парсинга)
+     # Полная дата + время
     else:
         try:
             naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
@@ -281,7 +281,8 @@ async def process_time(message: types.Message, state: FSMContext):
                 "18.12.2025 14:30"
             )
             return
-# Унифицированная обработка после любого успешного распознавания времени
+
+    # УНИФИЦИРОВАННАЯ ОБРАБОТКА ДЛЯ ВСЕХ ФОРМАТОВ (вне else!)
     if dt is None:
         await message.reply("Не удалось распознать время. Попробуйте другой формат.")
         return
