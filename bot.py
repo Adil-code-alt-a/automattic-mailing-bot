@@ -199,13 +199,17 @@ async def cmd_now(message: types.Message, state: FSMContext):
     await state.clear()
 
 # Приём поста
-@dp.message()
 async def receive_post(message: types.Message, state: FSMContext):
-    current = await state.get_state()
-    if current == Form.waiting_time.state:
+    # Если мы уже ожидаем время — обрабатываем как время
+    if await state.get_state() == Form.waiting_time.state:
         await process_time(message, state)
         return
 
+    # Если сообщение является командой — пропускаем (команды обрабатываются отдельно)
+    if message.text and message.text.startswith('/'):
+        return
+
+    # Обычный пост — принимаем и переходим в режим ожидания времени
     user_id = message.from_user.id
     if len(scheduled_tasks.get(user_id, [])) >= 20:
         await message.answer("Очередь полная (максимум 20 постов)")
