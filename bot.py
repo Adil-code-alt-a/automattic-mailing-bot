@@ -264,8 +264,7 @@ async def process_time(message: types.Message, state: FSMContext):
             await message.reply("Укажите время, например: сегодня 9:00 или 9:00")
             return
 
-           # Полная дата + время (последний вариант парсинга)
-       # Полная дата + время (последний вариант парсинга)
+      # Полная дата + время (последний вариант парсинга)
     else:
         try:
             naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
@@ -282,59 +281,10 @@ async def process_time(message: types.Message, state: FSMContext):
                 "18.12.2025 14:30"
             )
             return
-
-    # Унифицированная обработка после любого успешного распознавания времени
+# Унифицированная обработка после любого успешного распознавания времени
     if dt is None:
         await message.reply("Не удалось распознать время. Попробуйте другой формат.")
         return
-
-    if dt < now - timedelta(minutes=1):
-        await message.reply("Время уже прошло!")
-        return
-
-    delay = int((dt - now).total_seconds())
-    hours_left = delay // 3600
-    mins_left = (delay % 3600) // 60
-
-    user_id = message.from_user.id
-    if user_id not in scheduled_tasks:
-        scheduled_tasks[user_id] = []
-
-    data = await state.get_data()
-    orig_post = data["post"]
-
-    preview = orig_post.text or orig_post.caption or "[медиа]"
-    if len(preview) > 40:
-        preview = preview[:40] + "..."
-
-    task = {
-        "time": dt,
-        "post": orig_post,
-        "preview": preview
-    }
-    scheduled_tasks[user_id].append(task)
-    task_index = len(scheduled_tasks[user_id]) - 1
-
-    keyboard = get_task_keyboard(user_id, task_index)
-
-    await message.reply(
-        f"Принято в работу! ✅\n"
-        f"Запланировано на {dt.strftime('%d.%m.%Y %H:%M')} (МСК)\n"
-        f"Осталось: {hours_left} ч {mins_left} мин\n"
-        f"Позиция в очереди: {len(scheduled_tasks[user_id])}",
-        reply_markup=keyboard
-    )
-
-    await save_state()
-
-    asyncio.create_task(publish_task(task, user_id))
-
-    await state.clear()
-        # Фоновая публикация
-        asyncio.create_task(publish_task(task, user_id))
-
-        await state.clear()
-        return  # Завершаем функцию
 
     if dt < now - timedelta(minutes=1):
         await message.reply("Время уже прошло!")
