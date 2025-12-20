@@ -174,23 +174,29 @@ async def cmd_now(message: types.Message, state: FSMContext):
     await state.clear()
 
 # Приём поста
+# Объединённая обработка постов и времени (без FSM для стабильности)
 @dp.message()
-async def receive_post(message: types.Message, state: FSMContext):
-    # Сброс состояния для надёжности
-    await state.clear()
+async def handle_message(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
 
-    # Если сообщение — команда, пропускаем (они имеют отдельные хендлеры)
+    # Команды обрабатываются отдельно
     if message.text and message.text.startswith('/'):
         return
 
-    # Обычный пост
-    user_id = message.from_user.id
+    # Проверяем, есть ли сохранённый пост — это указание времени
+    data = await state.get_data()
+    if "pending_post" in data:
+        pending_post = data["pending_post"]
+        await process_time_logic(message, pending_post, user_id)
+        await state.clear()
+        return
+
+    # Обычный пост — сохраняем и просим время
     if len(scheduled_tasks.get(user_id, [])) >= 20:
         await message.answer("Очередь полная (максимум 20 постов)")
         return
 
-    await state.set_state(Form.waiting_time)
-    await state.update_data(post=message)
+    await state.update_data(pending_post=message)
 
     preview = message.text or message.caption or "[медиа]"
     if len(preview) > 40:
@@ -198,8 +204,8 @@ async def receive_post(message: types.Message, state: FSMContext):
 
     await message.reply(f"Пост принят: \"{preview}\"\nТеперь укажите время публикации")
 
-# Обработка времени
-async def process_time(message: types.Message, state: FSMContext):
+# Логика обработки времени
+async def process_time_logic(message: types.Message, orig_post: types.Message, user_id: int):
     text = message.text.strip()
     lower_text = text.lower()
     now = datetime.now(moscow_tz)
@@ -255,13 +261,6 @@ async def process_time(message: types.Message, state: FSMContext):
     hours_left = delay // 3600
     mins_left = (delay % 3600) // 60
 
-    user_id = message.from_user.id
-    if user_id not in scheduled_tasks:
-        scheduled_tasks[user_id] = []
-
-    data = await state.get_data()
-    orig_post = data["post"]
-
     preview = orig_post.text or orig_post.caption or "[медиа]"
     if len(preview) > 40:
         preview = preview[:40] + "..."
@@ -271,6 +270,8 @@ async def process_time(message: types.Message, state: FSMContext):
         "post": orig_post,
         "preview": preview
     }
+    if user_id not in scheduled_tasks:
+        scheduled_tasks[user_id] = []
     scheduled_tasks[user_id].append(task)
     task_index = len(scheduled_tasks[user_id]) - 1
 
@@ -288,7 +289,6 @@ async def process_time(message: types.Message, state: FSMContext):
 
     asyncio.create_task(publish_task(task, user_id))
 
-    await state.clear()
 
 # Фоновая публикация
 async def publish_task(task, user_id):
