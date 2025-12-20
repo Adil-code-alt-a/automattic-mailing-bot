@@ -185,7 +185,10 @@ async def cmd_now(message: types.Message, state: FSMContext):
 # Приём поста
 @dp.message()
 async def receive_post(message: types.Message, state: FSMContext):
-    # Если ожидаем время — обрабатываем как время
+    # Сброс состояния на всякий случай (предотвращает "застревание")
+    await state.clear()
+
+    # Если мы ожидаем время — обрабатываем как время
     if await state.get_state() == Form.waiting_time.state:
         await process_time(message, state)
         return
