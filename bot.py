@@ -185,14 +185,17 @@ async def cmd_now(message: types.Message, state: FSMContext):
 # Приём поста
 @dp.message()
 async def receive_post(message: types.Message, state: FSMContext):
+    # Проверяем, есть ли сохранённый пост в данных — это значит, что сообщение — время
     data = await state.get_data()
     if "post" in data:
         await process_time(message, state)
         return
 
+    # Команды пропускаем
     if message.text and message.text.startswith('/'):
         return
 
+    # Обычный пост
     user_id = message.from_user.id
     if len(scheduled_tasks.get(user_id, [])) >= 20:
         await message.answer("Очередь полная (максимум 20 постов)")
