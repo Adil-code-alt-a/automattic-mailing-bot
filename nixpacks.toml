@@ -1,5 +1,2 @@
-[phases.setup]
-nixPkgs = ['...', 'python312']
-
-[phases.build]
-cmds = ['rm -rf __pycache__ || true', 'python -m pip install -r requirements.txt']
+[start]
+cmd = "python bot.py"
