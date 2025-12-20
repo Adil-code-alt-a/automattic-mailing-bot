@@ -254,27 +254,19 @@ async def process_time(message: types.Message, state: FSMContext):
             return
 
     # Полная дата + время
-    else:
-        try:
-            naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
-            dt = naive_dt.replace(tzinfo=moscow_tz)
-        except ValueError:
-            await message.reply(
-                "Не понял время.\n"
-                "Примеры:\n"
-                "через 15 мин\n"
-                "через 1 минуту\n"
-                "сегодня 9:00\n"
-                "в 9:00\n"
-                "9:00\n"
-                "завтра 7:00\n"
-                "18.12.2025 14:30"
-            )
-            return
-
-    # Унифицированная обработка для всех форматов
+    # Унифицированная обработка после любого успешного распознавания времени
     if dt is None:
-        await message.reply("Не удалось распознать время.")
+        await message.reply(
+            "Не понял время.\n"
+            "Примеры:\n"
+            "через 15 мин\n"
+            "через 1 минуту\n"
+            "сегодня 9:00\n"
+            "в 9:00\n"
+            "9:00\n"
+            "завтра 7:00\n"
+            "18.12.2025 14:30"
+        )
         return
 
     if dt < now - timedelta(minutes=1):
