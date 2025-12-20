@@ -42,7 +42,7 @@ if os.path.exists(QUEUE_FILE):
             saved = json.load(f)
         scheduled_tasks = {int(k): v for k, v in saved.get("tasks", {}).items()}
         user_channels = {int(k): v for k, v in saved.get("channels", {}).items()}
-        logging.info("Состояние загружено из queue.json")
+        logging.info("Состояние загружено")
     except Exception as e:
         logging.error(f"Ошибка загрузки queue.json: {e}")
         scheduled_tasks = {}
@@ -185,12 +185,12 @@ async def cmd_now(message: types.Message, state: FSMContext):
 # Приём поста
 @dp.message()
 async def receive_post(message: types.Message, state: FSMContext):
-    # Если мы ожидаем время — обрабатываем как время
+    # Если ожидаем время — обрабатываем как время
     if await state.get_state() == Form.waiting_time.state:
         await process_time(message, state)
         return
 
-    # Команды уже обработаны отдельными хендлерами — пропускаем
+    # Команды обрабатываются отдельно — пропускаем
     if message.text and message.text.startswith('/'):
         return
 
@@ -216,7 +216,7 @@ async def process_time(message: types.Message, state: FSMContext):
     now = datetime.now(moscow_tz)
     dt = None
 
-    # "через X" (полная поддержка склонений)
+    # "через X"
     if "через" in lower_text:
         mins_match = re.search(r"(\d+)\s*(мин|минут|минуту|минуты|м)", lower_text)
         hours_match = re.search(r"(\d+)\s*(час|часа|часов|ч)", lower_text)
@@ -254,19 +254,27 @@ async def process_time(message: types.Message, state: FSMContext):
             return
 
     # Полная дата + время
-    # Унифицированная обработка после любого успешного распознавания времени
+    else:
+        try:
+            naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
+            dt = naive_dt.replace(tzinfo=moscow_tz)
+        except ValueError:
+            await message.reply(
+                "Не понял время.\n"
+                "Примеры:\n"
+                "через 15 мин\n"
+                "через 1 минуту\n"
+                "сегодня 9:00\n"
+                "в 9:00\n"
+                "9:00\n"
+                "завтра 7:00\n"
+                "18.12.2025 14:30"
+            )
+            return
+
+    # Унифицированная обработка для всех форматов
     if dt is None:
-        await message.reply(
-            "Не понял время.\n"
-            "Примеры:\n"
-            "через 15 мин\n"
-            "через 1 минуту\n"
-            "сегодня 9:00\n"
-            "в 9:00\n"
-            "9:00\n"
-            "завтра 7:00\n"
-            "18.12.2025 14:30"
-        )
+        await message.reply("Не удалось распознать время.")
         return
 
     if dt < now - timedelta(minutes=1):
