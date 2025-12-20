@@ -185,19 +185,18 @@ async def cmd_now(message: types.Message, state: FSMContext):
 # Приём поста
 @dp.message()
 async def receive_post(message: types.Message, state: FSMContext):
-    # Сброс состояния на всякий случай (предотвращает "застревание")
-    await state.clear()
+    current_state = await state.get_state()
 
-    # Если мы ожидаем время — обрабатываем как время
-    if await state.get_state() == Form.waiting_time.state:
+    # Если мы ожидаем время — обрабатываем сообщение как время
+    if current_state == Form.waiting_time.state:
         await process_time(message, state)
         return
 
-    # Команды обрабатываются отдельно — пропускаем
+    # Если сообщение является командой — пропускаем (команды имеют отдельные хендлеры)
     if message.text and message.text.startswith('/'):
         return
 
-    # Обычный пост
+    # Обычный пост — принимаем и переходим в режим ожидания времени
     user_id = message.from_user.id
     if len(scheduled_tasks.get(user_id, [])) >= 20:
         await message.answer("Очередь полная (максимум 20 постов)")
@@ -211,7 +210,7 @@ async def receive_post(message: types.Message, state: FSMContext):
         preview = preview[:40] + "..."
 
     await message.reply(f"Пост принят: \"{preview}\"\nТеперь укажите время публикации")
-
+    
 # Обработка времени
 async def process_time(message: types.Message, state: FSMContext):
     text = message.text.strip()
