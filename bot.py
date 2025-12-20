@@ -1,373 +1,209 @@
+import asyncio
+import json
+import logging
+import os
+import re
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from aiohttp import web
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-import asyncio
-import re
-import os
-import json
-import logging
+
+# ---------------- CONFIG ----------------
 
 logging.basicConfig(level=logging.INFO)
 
-TOKEN = os.getenv("TOKEN", "8560527789:AAF8r9Eo7MfIergU-OqhUW0hIi07hf1myAo")
-DEFAULT_CHANNEL_ID = "-1003452189598"
-
-WEBHOOK_HOST = "https://automattic-mailing-bot-production.up.railway.app"
+TOKEN = os.getenv("TOKEN")
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
+DEFAULT_CHANNEL_ID = "-1003452189598"
+QUEUE_FILE = "/data/queue.json"
 moscow_tz = ZoneInfo("Europe/Moscow")
 
-bot = Bot(token=TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+bot = Bot(TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
 
-QUEUE_FILE = "/data/queue.json"
+# ---------------- STORAGE ----------------
+
+scheduled_tasks: dict[int, list] = {}
+user_channels: dict[int, str] = {}
 
 if os.path.exists(QUEUE_FILE):
     try:
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
-            saved = json.load(f)
-        scheduled_tasks = {int(k): v for k, v in saved.get("tasks", {}).items()}
-        user_channels = {int(k): v for k, v in saved.get("channels", {}).items()}
-    except:
-        scheduled_tasks = {}
-        user_channels = {}
-else:
-    scheduled_tasks = {}
-    user_channels = {}
-
-def get_user_channel(user_id: int) -> str:
-    return user_channels.get(user_id, DEFAULT_CHANNEL_ID)
+            data = json.load(f)
+        scheduled_tasks = {int(k): v for k, v in data.get("tasks", {}).items()}
+        user_channels = {int(k): v for k, v in data.get("channels", {}).items()}
+        logging.info("Очередь загружена")
+    except Exception as e:
+        logging.error(f"Ошибка загрузки: {e}")
 
 async def save_state():
-    try:
-        data = {
-            "tasks": {str(k): v for k, v in scheduled_tasks.items()},
-            "channels": {str(k): v for k, v in user_channels.items()}
-        }
-        with open(QUEUE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, default=str)
-    except:
-        pass
+    with open(QUEUE_FILE, "w", encoding="utf-8") as f:
+        json.dump(
+            {"tasks": scheduled_tasks, "channels": user_channels},
+            f,
+            ensure_ascii=False
+        )
 
-class Form(StatesGroup):
-    waiting_time = State()
-    setting_channel = State()
+def get_channel(user_id: int) -> str:
+    return user_channels.get(user_id, DEFAULT_CHANNEL_ID)
 
-def get_task_keyboard(user_id: int, task_index: int):
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton("Опубликовать сейчас", callback_data=f"pub_{user_id}_{task_index}"),
-            types.InlineKeyboardButton("Отменить", callback_data=f"can_{user_id}_{task_index}")
-        ],
-        [
-            types.InlineKeyboardButton("Изменить время", callback_data=f"chg_{user_id}_{task_index}")
-        ]
-    ])
-    return keyboard
+# ---------------- COMMANDS ----------------
 
 @dp.message(CommandStart())
 @dp.message(Command("help"))
 async def start(message: types.Message):
-    now = datetime.now(moscow_tz)
     await message.answer(
-        f"Привет! Текущее время МСК: {now.strftime('%H:%M %d.%m.%Y')}\n\n"
-        "Я — ваш личный планировщик постов в Telegram-канал.\n\n"
-        "Как использовать:\n"
-        "1. Напишите пост (текст, фото, видео, эмодзи — всё сразу)\n"
-        "2. Укажите время публикации\n\n"
-        "Поддерживаемые форматы времени:\n"
-        "• через 15 мин\n"
-        "• через 2 часа\n"
-        "• сегодня 8:00\n"
-        "• в 15:30\n"
-        "• 8:00 (сегодня или завтра)\n"
-        "• завтра 7:00\n"
-        "• завтра 23:59\n"
-        "• 31.12.2025 23:59\n"
-        "• 01.01.2026 00:01\n\n"
-        "Команды:\n"
-        "/list — посмотреть очередь постов\n"
-        "/status — статус и текущий канал\n"
-        "/setchannel — сменить канал публикации\n"
-        "/cancel <номер> — отменить пост\n"
-        "/now — опубликовать текущий пост сразу\n"
-        "/help — эта справка"
+        "Напишите пост → затем время.\n\n"
+        "Примеры:\n"
+        "через 15 мин\n"
+        "завтра 12:00\n"
+        "31.12.2025 23:59\n\n"
+        "/list — очередь\n"
+        "/cancel <номер>"
     )
-
-@dp.message(Command("status"))
-async def status(message: types.Message):
-    user_id = message.from_user.id
-    tasks_count = len(scheduled_tasks.get(user_id, []))
-    channel = get_user_channel(user_id)
-    await message.answer(
-        f"Статус:\n"
-        f"Канал: {channel}\n"
-        f"Постов в очереди: {tasks_count}\n"
-        f"Максимум: 20"
-    )
-
-@dp.message(Command("setchannel"))
-async def set_channel(message: types.Message, state: FSMContext):
-    await state.set_state(Form.setting_channel)
-    await message.answer("Перешлите сообщение из нужного канала")
-
-@dp.message(Form.setting_channel)
-async def process_channel(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    if message.forward_from_chat and message.forward_from_chat.type in ["channel", "supergroup"]:
-        new_channel = str(message.forward_from_chat.id)
-        user_channels[user_id] = new_channel
-        await save_state()
-        await message.answer(f"Канал изменён на {new_channel}")
-    else:
-        await message.answer("Не распознал канал. Перешлите сообщение из канала")
-    await state.clear()
 
 @dp.message(Command("list"))
-async def cmd_list(message: types.Message):
-    user_id = message.from_user.id
-    tasks = scheduled_tasks.get(user_id, [])
+async def list_cmd(message: types.Message):
+    tasks = scheduled_tasks.get(message.from_user.id, [])
     if not tasks:
         await message.answer("Очередь пуста")
         return
-    text = "Очередь постов:\n\n"
-    for i, task in enumerate(tasks, 1):
-        dt = task["time"]
-        preview = task["preview"]
-        text += f"{i}. {dt.strftime('%d.%m %H:%M')} — {preview}\n"
+
+    text = "Очередь:\n\n"
+    for i, t in enumerate(tasks, 1):
+        dt = datetime.fromisoformat(t["time"])
+        text += f"{i}. {dt:%d.%m %H:%M} — {t['preview']}\n"
+
     await message.answer(text)
 
 @dp.message(Command("cancel"))
-async def cmd_cancel(message: types.Message):
+async def cancel_cmd(message: types.Message):
     try:
-        num = int(message.text.split(maxsplit=1)[1]) - 1
-        user_id = message.from_user.id
-        tasks = scheduled_tasks.get(user_id, [])
-        if 0 <= num < len(tasks):
-            del tasks[num]
-            await save_state()
-            await message.answer(f"Пост №{num + 1} отменён")
-        else:
-            await message.answer("Неверный номер")
-    except:
-        await message.answer("Использование: /cancel <номер из /list>")
+        idx = int(message.text.split()[1]) - 1
+        scheduled_tasks[message.from_user.id].pop(idx)
+        await save_state()
+        await message.answer("Пост отменён")
+    except Exception:
+        await message.answer("Использование: /cancel <номер>")
 
-@dp.message(Command("now"))
-async def cmd_now(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    if "post" not in data:
-        await message.answer("Сначала отправьте пост")
-        return
-    post = data["post"]
-    channel = get_user_channel(message.from_user.id)
-    sent = await post.copy_to(channel)
-    link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
-    await message.answer(f"Пост опубликован сразу!\n{link}")
-    await state.clear()
+# ---------------- POST FLOW ----------------
 
-# Приём поста
-# Объединённая обработка постов и времени (без FSM для стабильности)
 @dp.message()
 async def handle_message(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-
-    # Команды обрабатываются отдельно
-    if message.text and message.text.startswith('/'):
+    if message.text and message.text.startswith("/"):
         return
 
-    # Проверяем, есть ли сохранённый пост — это указание времени
     data = await state.get_data()
-    if "pending_post" in data:
-        pending_post = data["pending_post"]
-        await process_time_logic(message, pending_post, user_id)
+
+    # Ввод времени
+    if "post" in data:
+        await process_time(message, data["post"])
         await state.clear()
         return
 
-    # Обычный пост — сохраняем и просим время
-    if len(scheduled_tasks.get(user_id, [])) >= 20:
-        await message.answer("Очередь полная (максимум 20 постов)")
-        return
-
-    await state.update_data(pending_post=message)
-
+    # Новый пост
     preview = message.text or message.caption or "[медиа]"
-    if len(preview) > 40:
-        preview = preview[:40] + "..."
+    preview = preview[:40] + "..." if len(preview) > 40 else preview
 
-    await message.reply(f"Пост принят: \"{preview}\"\nТеперь укажите время публикации")
+    await state.update_data(post={
+        "chat_id": message.chat.id,
+        "message_id": message.message_id,
+        "preview": preview
+    })
 
-# Логика обработки времени
-async def process_time_logic(message: types.Message, orig_post: types.Message, user_id: int):
-    text = message.text.strip()
-    lower_text = text.lower()
+    await message.answer("Пост принят. Укажите время публикации")
+
+# ---------------- TIME PARSER ----------------
+
+async def process_time(message: types.Message, post: dict):
+    text = message.text.lower()
     now = datetime.now(moscow_tz)
     dt = None
 
-    if "через" in lower_text:
-        mins_match = re.search(r"(\d+)\s*(мин|минут|минуту|минуты|м)", lower_text)
-        hours_match = re.search(r"(\d+)\s*(час|часа|часов|ч)", lower_text)
-        if mins_match:
-            dt = now + timedelta(minutes=int(mins_match.group(1)))
-        elif hours_match:
-            dt = now + timedelta(hours=int(hours_match.group(1)))
-        else:
-            await message.reply("Не понял количество")
-            return
+    if "через" in text:
+        if m := re.search(r"(\d+)\s*мин", text):
+            dt = now + timedelta(minutes=int(m.group(1)))
+        elif h := re.search(r"(\d+)\s*час", text):
+            dt = now + timedelta(hours=int(h.group(1)))
 
-    elif "завтра" in lower_text:
-        tomorrow = now + timedelta(days=1)
-        time_match = re.search(r"(\d{1,2}):(\d{2})", text)
-        if time_match:
-            h = int(time_match.group(1))
-            m = int(time_match.group(2))
-            dt = tomorrow.replace(hour=h, minute=m, second=0, microsecond=0)
-        else:
-            await message.reply("Укажите время после 'завтра'")
-            return
-
-    elif "сегодня" in lower_text or "в " in lower_text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
-        time_match = re.search(r"(\d{1,2}):(\d{2})", text)
-        if time_match:
-            h = int(time_match.group(1))
-            m = int(time_match.group(2))
-            dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if dt < now - timedelta(minutes=1):
-                dt += timedelta(days=1)
-        else:
-            await message.reply("Укажите время")
-            return
+    elif "завтра" in text:
+        if t := re.search(r"(\d{1,2}):(\d{2})", text):
+            dt = (now + timedelta(days=1)).replace(
+                hour=int(t.group(1)),
+                minute=int(t.group(2)),
+                second=0,
+                microsecond=0
+            )
 
     else:
         try:
-            naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
-            dt = naive_dt.replace(tzinfo=moscow_tz)
-        except ValueError:
-            await message.reply("Не понял время")
-            return
+            dt = datetime.strptime(text, "%d.%m.%Y %H:%M").replace(tzinfo=moscow_tz)
+        except:
+            if t := re.search(r"(\d{1,2}):(\d{2})", text):
+                dt = now.replace(
+                    hour=int(t.group(1)),
+                    minute=int(t.group(2)),
+                    second=0,
+                    microsecond=0
+                )
+                if dt < now:
+                    dt += timedelta(days=1)
 
-    if dt < now - timedelta(minutes=1):
-        await message.reply("Время уже прошло!")
+    if not dt or dt < now:
+        await message.answer("Не понял время")
         return
-
-    delay = int((dt - now).total_seconds())
-    hours_left = delay // 3600
-    mins_left = (delay % 3600) // 60
-
-    preview = orig_post.text or orig_post.caption or "[медиа]"
-    if len(preview) > 40:
-        preview = preview[:40] + "..."
 
     task = {
-        "time": dt,
-        "post": orig_post,
-        "preview": preview
+        "time": dt.isoformat(),
+        "chat_id": post["chat_id"],
+        "message_id": post["message_id"],
+        "preview": post["preview"]
     }
-    if user_id not in scheduled_tasks:
-        scheduled_tasks[user_id] = []
-    scheduled_tasks[user_id].append(task)
-    task_index = len(scheduled_tasks[user_id]) - 1
 
-    keyboard = get_task_keyboard(user_id, task_index)
-
-    await message.reply(
-        f"Принято в работу! ✅\n"
-        f"Запланировано на {dt.strftime('%d.%m.%Y %H:%M')} (МСК)\n"
-        f"Осталось: {hours_left} ч {mins_left} мин\n"
-        f"Позиция в очереди: {len(scheduled_tasks[user_id])}",
-        reply_markup=keyboard
-    )
-
+    scheduled_tasks.setdefault(message.from_user.id, []).append(task)
     await save_state()
 
-    asyncio.create_task(publish_task(task, user_id))
+    asyncio.create_task(publish_task(message.from_user.id, task))
+    await message.answer(f"Запланировано на {dt:%d.%m %H:%M}")
 
+# ---------------- PUBLISHER ----------------
 
-# Фоновая публикация
-async def publish_task(task, user_id):
-    while True:
-        dt = task["time"]
-        now = datetime.now(moscow_tz)
-        delay = int((dt - now).total_seconds())
-        if delay <= 0:
-            break
+async def publish_task(user_id: int, task: dict):
+    dt = datetime.fromisoformat(task["time"])
+    while (delay := (dt - datetime.now(moscow_tz)).total_seconds()) > 0:
         await asyncio.sleep(min(delay, 60))
 
-    channel = get_user_channel(user_id)
-    try:
-        sent = await task["post"].copy_to(channel)
-        link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
-        await bot.send_message(user_id, f"Пост опубликован!\n{link}\nВремя: {dt.strftime('%H:%M %d.%m.%Y')} МСК")
-    except Exception as e:
-        await bot.send_message(user_id, f"Ошибка публикации поста: {e}")
+    await bot.copy_message(
+        chat_id=get_channel(user_id),
+        from_chat_id=task["chat_id"],
+        message_id=task["message_id"]
+    )
 
-    if user_id in scheduled_tasks and task in scheduled_tasks[user_id]:
-        scheduled_tasks[user_id].remove(task)
-        await save_state()
+    scheduled_tasks[user_id].remove(task)
+    await save_state()
+    await bot.send_message(user_id, "Пост опубликован")
 
-# Обработка кнопок
-@dp.callback_query(lambda c: c.data and c.data.startswith(('pub_', 'can_', 'chg_')))
-async def callback_buttons(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    data = callback.data.split('_')
-    action = data[0]
-    task_user = int(data[1])
-    task_index = int(data[2])
-
-    if task_user != user_id:
-        await callback.answer("Это не ваш пост")
-        return
-
-    tasks = scheduled_tasks.get(user_id, [])
-    if task_index >= len(tasks):
-        await callback.answer("Пост уже обработан")
-        return
-
-    task = tasks[task_index]
-    channel = get_user_channel(user_id)
-
-    if action == "pub":
-        sent = await task["post"].copy_to(channel)
-        link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
-        await callback.message.edit_text(callback.message.text + f"\n\nПост опубликован сейчас!\n{link}")
-        del tasks[task_index]
-        await save_state()
-    elif action == "can":
-        del tasks[task_index]
-        await save_state()
-        await callback.message.edit_text(callback.message.text + "\n\nПост отменён")
-    elif action == "chg":
-        await callback.message.edit_text(callback.message.text + "\n\nНапишите новое время для этого поста")
-
-    await callback.answer()
-
-# Webhook сервер
-app = web.Application()
-SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
+# ---------------- WEBHOOK ----------------
 
 async def on_startup(app):
-    try:
-        await bot.set_webhook(WEBHOOK_URL)
-        logging.info(f"Webhook установлен: {WEBHOOK_URL}")
-    except Exception as e:
-        logging.error(f"Ошибка установки webhook: {e}")
+    for user_id, tasks in scheduled_tasks.items():
+        for task in tasks:
+            asyncio.create_task(publish_task(user_id, task))
 
-async def on_shutdown(app):
-    try:
-        await bot.delete_webhook()
-        logging.info("Webhook удалён")
-    except Exception as e:
-        logging.error(f"Ошибка удаления webhook: {e}")
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info("Webhook установлен")
 
+app = web.Application()
+SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
 app.on_startup.append(on_startup)
-app.on_shutdown.append(on_shutdown)
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
