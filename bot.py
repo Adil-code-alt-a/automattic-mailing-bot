@@ -182,43 +182,44 @@ async def cmd_now(message: types.Message, state: FSMContext):
     await message.answer(f"Пост опубликован сразу!\n{link}")
     await state.clear()
 
-# Приём поста
+# Объединённая обработка постов и времени (без полного FSM для стабильности)
 @dp.message()
-async def receive_post(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
+async def handle_message(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
 
-    # Если мы ожидаем время — всегда обрабатываем как время
-    if current_state == Form.waiting_time.state:
-        await process_time(message, state)
-        return
-
-    # Если сообщение является командой — пропускаем (команды имеют отдельные хендлеры)
+    # Команды обрабатываются отдельно
     if message.text and message.text.startswith('/'):
         return
 
-    # Обычный пост — принимаем и переходим в режим ожидания времени
-    user_id = message.from_user.id
+    # Если в данных есть сохранённый пост — это указание времени
+    data = await state.get_data()
+    if "pending_post" in data:
+        pending_post = data["pending_post"]
+        await process_time_logic(message, pending_post, user_id)
+        await state.clear()
+        return
+
+    # Обычный пост — сохраняем и просим время
     if len(scheduled_tasks.get(user_id, [])) >= 20:
         await message.answer("Очередь полная (максимум 20 постов)")
         return
 
-    await state.set_state(Form.waiting_time)
-    await state.update_data(post=message)
+    await state.update_data(pending_post=message)
 
     preview = message.text or message.caption or "[медиа]"
     if len(preview) > 40:
         preview = preview[:40] + "..."
 
     await message.reply(f"Пост принят: \"{preview}\"\nТеперь укажите время публикации")
-    
-# Обработка времени
-async def process_time(message: types.Message, state: FSMContext):
+
+# Логика обработки времени (выделена отдельно)
+async def process_time_logic(message: types.Message, orig_post: types.Message, user_id: int):
     text = message.text.strip()
     lower_text = text.lower()
     now = datetime.now(moscow_tz)
     dt = None
 
-    # "через X"
+    # Парсинг времени
     if "через" in lower_text:
         mins_match = re.search(r"(\d+)\s*(мин|минут|минуту|минуты|м)", lower_text)
         hours_match = re.search(r"(\d+)\s*(час|часа|часов|ч)", lower_text)
@@ -227,10 +228,9 @@ async def process_time(message: types.Message, state: FSMContext):
         elif hours_match:
             dt = now + timedelta(hours=int(hours_match.group(1)))
         else:
-            await message.reply("Не понял количество. Примеры: через 15 мин, через 1 минуту, через 2 часа")
+            await message.reply("Не понял количество")
             return
 
-    # "завтра" + время
     elif "завтра" in lower_text:
         tomorrow = now + timedelta(days=1)
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
@@ -239,10 +239,9 @@ async def process_time(message: types.Message, state: FSMContext):
             m = int(time_match.group(2))
             dt = tomorrow.replace(hour=h, minute=m, second=0, microsecond=0)
         else:
-            await message.reply("Укажите время после 'завтра', например: завтра 7:00")
+            await message.reply("У, укажите время после 'завтра'")
             return
 
-    # "сегодня" + время или "в " + время или просто "8:07"
     elif "сегодня" in lower_text or "в " in lower_text or re.match(r"^\d{1,2}:\d{2}$", text.strip()):
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
         if time_match:
@@ -252,32 +251,16 @@ async def process_time(message: types.Message, state: FSMContext):
             if dt < now - timedelta(minutes=1):
                 dt += timedelta(days=1)
         else:
-            await message.reply("Укажите время, например: сегодня 9:00 или 9:00")
+            await message.reply("Укажите время")
             return
 
-    # Полная дата + время
     else:
         try:
             naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
             dt = naive_dt.replace(tzinfo=moscow_tz)
         except ValueError:
-            await message.reply(
-                "Не понял время.\n"
-                "Примеры:\n"
-                "через 15 мин\n"
-                "через 1 минуту\n"
-                "сегодня 9:00\n"
-                "в 9:00\n"
-                "9:00\n"
-                "завтра 7:00\n"
-                "18.12.2025 14:30"
-            )
+            await message.reply("Не понял время")
             return
-
-    # Унифицированная обработка для всех форматов
-    if dt is None:
-        await message.reply("Не удалось распознать время.")
-        return
 
     if dt < now - timedelta(minutes=1):
         await message.reply("Время уже прошло!")
@@ -286,13 +269,6 @@ async def process_time(message: types.Message, state: FSMContext):
     delay = int((dt - now).total_seconds())
     hours_left = delay // 3600
     mins_left = (delay % 3600) // 60
-
-    user_id = message.from_user.id
-    if user_id not in scheduled_tasks:
-        scheduled_tasks[user_id] = []
-
-    data = await state.get_data()
-    orig_post = data["post"]
 
     preview = orig_post.text or orig_post.caption or "[медиа]"
     if len(preview) > 40:
@@ -303,6 +279,8 @@ async def process_time(message: types.Message, state: FSMContext):
         "post": orig_post,
         "preview": preview
     }
+    if user_id not in scheduled_tasks:
+        scheduled_tasks[user_id] = []
     scheduled_tasks[user_id].append(task)
     task_index = len(scheduled_tasks[user_id]) - 1
 
@@ -319,8 +297,6 @@ async def process_time(message: types.Message, state: FSMContext):
     await save_state()
 
     asyncio.create_task(publish_task(task, user_id))
-
-    await state.clear()
 
 # Фоновая публикация (устойчивая к перезапускам)
 async def publish_task(task, user_id):
