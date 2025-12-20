@@ -13,14 +13,14 @@ import os
 import json
 import logging
 
-# Настройка логирования (видно в Railway logs)
+# Логирование
 logging.basicConfig(level=logging.INFO)
 
-# Токен бота и ID канала по умолчанию
+# Токен и канал
 TOKEN = os.getenv("TOKEN", "8560527789:AAF8r9Eo7MfIergU-OqhUW0hIi07hf1myAo")
 DEFAULT_CHANNEL_ID = "-1003452189598"
 
-# Webhook настройки для Railway
+# Webhook
 WEBHOOK_HOST = "https://automattic-mailing-bot-production.up.railway.app"
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
@@ -28,26 +28,21 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 # Московское время
 moscow_tz = ZoneInfo("Europe/Moscow")
 
-# Инициализация бота и диспетчера
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Файл для сохранения очереди и настроек
+# Сохранение
 QUEUE_FILE = "/data/queue.json"
 
-# Глобальные переменные
-scheduled_tasks = {}  # user_id -> list of tasks
-user_channels = {}    # user_id -> channel_id
-
-# Загрузка сохранённого состояния при запуске
+# Загрузка состояния
 if os.path.exists(QUEUE_FILE):
     try:
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
         scheduled_tasks = {int(k): v for k, v in saved.get("tasks", {}).items()}
         user_channels = {int(k): v for k, v in saved.get("channels", {}).items()}
-        logging.info("Очередь и настройки загружены из queue.json")
+        logging.info("Состояние загружено из queue.json")
     except Exception as e:
         logging.error(f"Ошибка загрузки queue.json: {e}")
         scheduled_tasks = {}
@@ -56,11 +51,9 @@ else:
     scheduled_tasks = {}
     user_channels = {}
 
-# Функция получения канала пользователя
 def get_user_channel(user_id: int) -> str:
     return user_channels.get(user_id, DEFAULT_CHANNEL_ID)
 
-# Функция сохранения состояния
 async def save_state():
     try:
         data = {
@@ -69,16 +62,14 @@ async def save_state():
         }
         with open(QUEUE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, default=str)
-        logging.info("Очередь и настройки сохранены в queue.json")
+        logging.info("Состояние сохранено")
     except Exception as e:
-        logging.error(f"Ошибка сохранения queue.json: {e}")
+        logging.error(f"Ошибка сохранения: {e}")
 
-# Состояния FSM
 class Form(StatesGroup):
     waiting_time = State()
     setting_channel = State()
 
-# Клавиатура с кнопками для поста
 def get_task_keyboard(user_id: int, task_index: int):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -91,7 +82,6 @@ def get_task_keyboard(user_id: int, task_index: int):
     ])
     return keyboard
 
-# Команда /start и /help
 @dp.message(CommandStart())
 @dp.message(Command("help"))
 async def start(message: types.Message):
@@ -121,7 +111,6 @@ async def start(message: types.Message):
         "/help — эта справка"
     )
 
-# Команда /status
 @dp.message(Command("status"))
 async def status(message: types.Message):
     user_id = message.from_user.id
@@ -134,13 +123,11 @@ async def status(message: types.Message):
         f"Максимум: 20"
     )
 
-# Команда /setchannel
 @dp.message(Command("setchannel"))
 async def set_channel(message: types.Message, state: FSMContext):
     await state.set_state(Form.setting_channel)
     await message.answer("Перешлите сообщение из нужного канала")
 
-# Обработка смены канала
 @dp.message(Form.setting_channel)
 async def process_channel(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -153,7 +140,6 @@ async def process_channel(message: types.Message, state: FSMContext):
         await message.answer("Не распознал канал. Перешлите сообщение из канала")
     await state.clear()
 
-# Команда /list
 @dp.message(Command("list"))
 async def cmd_list(message: types.Message):
     user_id = message.from_user.id
@@ -168,7 +154,6 @@ async def cmd_list(message: types.Message):
         text += f"{i}. {dt.strftime('%d.%m %H:%M')} — {preview}\n"
     await message.answer(text)
 
-# Команда /cancel
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message):
     try:
@@ -184,7 +169,6 @@ async def cmd_cancel(message: types.Message):
     except:
         await message.answer("Использование: /cancel <номер из /list>")
 
-# Команда /now
 @dp.message(Command("now"))
 async def cmd_now(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -199,17 +183,18 @@ async def cmd_now(message: types.Message, state: FSMContext):
     await state.clear()
 
 # Приём поста
+@dp.message()
 async def receive_post(message: types.Message, state: FSMContext):
-    # Если мы уже ожидаем время — обрабатываем как время
+    # Если мы ожидаем время — обрабатываем как время
     if await state.get_state() == Form.waiting_time.state:
         await process_time(message, state)
         return
 
-    # Если сообщение является командой — пропускаем (команды обрабатываются отдельно)
+    # Команды уже обработаны отдельными хендлерами — пропускаем
     if message.text and message.text.startswith('/'):
         return
 
-    # Обычный пост — принимаем и переходим в режим ожидания времени
+    # Обычный пост
     user_id = message.from_user.id
     if len(scheduled_tasks.get(user_id, [])) >= 20:
         await message.answer("Очередь полная (максимум 20 постов)")
@@ -231,8 +216,8 @@ async def process_time(message: types.Message, state: FSMContext):
     now = datetime.now(moscow_tz)
     dt = None
 
-        # "через X" (полная поддержка склонений минут и часов)
-if "через" in lower_text:
+    # "через X" (полная поддержка склонений)
+    if "через" in lower_text:
         mins_match = re.search(r"(\d+)\s*(мин|минут|минуту|минуты|м)", lower_text)
         hours_match = re.search(r"(\d+)\s*(час|часа|часов|ч)", lower_text)
         if mins_match:
@@ -268,19 +253,28 @@ if "через" in lower_text:
             await message.reply("Укажите время, например: сегодня 9:00 или 9:00")
             return
 
-           # Унифицированная обработка после любого успешного распознавания времени
+    # Полная дата + время
+    else:
+        try:
+            naive_dt = datetime.strptime(text, "%d.%m.%Y %H:%M")
+            dt = naive_dt.replace(tzinfo=moscow_tz)
+        except ValueError:
+            await message.reply(
+                "Не понял время.\n"
+                "Примеры:\n"
+                "через 15 мин\n"
+                "через 1 минуту\n"
+                "сегодня 9:00\n"
+                "в 9:00\n"
+                "9:00\n"
+                "завтра 7:00\n"
+                "18.12.2025 14:30"
+            )
+            return
+
+    # Унифицированная обработка для всех форматов
     if dt is None:
-        await message.reply(
-            "Не понял время.\n"
-            "Примеры:\n"
-            "через 15 мин\n"
-            "через 1 минуту\n"
-            "сегодня 9:00\n"
-            "в 9:00\n"
-            "9:00\n"
-            "завтра 7:00\n"
-            "18.12.2025 14:30"
-        )
+        await message.reply("Не удалось распознать время.")
         return
 
     if dt < now - timedelta(minutes=1):
@@ -325,16 +319,15 @@ if "через" in lower_text:
     asyncio.create_task(publish_task(task, user_id))
 
     await state.clear()
-    
-# Фоновая публикация поста (устойчивая к перезапускам)
+
+# Фоновая публикация (устойчивая к перезапускам)
 async def publish_task(task, user_id):
     while True:
         dt = task["time"]
         now = datetime.now(moscow_tz)
         delay = int((dt - now).total_seconds())
         if delay <= 0:
-            break  # Время пришло или прошло — публикуем
-        # Спим максимум 60 секунд, чтобы часто проверять (устойчивость к перезапускам)
+            break
         await asyncio.sleep(min(delay, 60))
 
     channel = get_user_channel(user_id)
@@ -345,10 +338,10 @@ async def publish_task(task, user_id):
     except Exception as e:
         await bot.send_message(user_id, f"Ошибка публикации поста: {e}")
 
-    # Удаление из очереди
     if user_id in scheduled_tasks and task in scheduled_tasks[user_id]:
         scheduled_tasks[user_id].remove(task)
         await save_state()
+
 # Обработка кнопок
 @dp.callback_query(lambda c: c.data and c.data.startswith(('pub_', 'can_', 'chg_')))
 async def callback_buttons(callback: types.CallbackQuery):
@@ -387,7 +380,6 @@ async def callback_buttons(callback: types.CallbackQuery):
 
 # Webhook сервер
 app = web.Application()
-
 SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
 
 async def on_startup(app):
