@@ -228,17 +228,15 @@ async def process_time(message: types.Message, state: FSMContext):
     dt = None
 
         # "через X" (полная поддержка склонений минут и часов)
-    if "через" in lower_text:
-        # Минуты: мин, минут, минуту, минуты, м
+if "через" in lower_text:
         mins_match = re.search(r"(\d+)\s*(мин|минут|минуту|минуты|м)", lower_text)
-        # Часы: час, часа, часов, ч
         hours_match = re.search(r"(\d+)\s*(час|часа|часов|ч)", lower_text)
         if mins_match:
             dt = now + timedelta(minutes=int(mins_match.group(1)))
         elif hours_match:
             dt = now + timedelta(hours=int(hours_match.group(1)))
         else:
-            await message.reply("Не понял количество минут или часов. Примеры: через 15 мин, через 1 минуту, через 2 часа")
+            await message.reply("Не понял количество. Примеры: через 15 мин, через 1 минуту, через 2 часа")
             return
 
     # "завтра" + время
@@ -266,12 +264,13 @@ async def process_time(message: types.Message, state: FSMContext):
             await message.reply("Укажите время, например: сегодня 9:00 или 9:00")
             return
 
-        # Унифицированная обработка после любого успешного распознавания времени
+           # Унифицированная обработка после любого успешного распознавания времени
     if dt is None:
         await message.reply(
             "Не понял время.\n"
             "Примеры:\n"
             "через 15 мин\n"
+            "через 1 минуту\n"
             "сегодня 9:00\n"
             "в 9:00\n"
             "9:00\n"
@@ -322,7 +321,7 @@ async def process_time(message: types.Message, state: FSMContext):
     asyncio.create_task(publish_task(task, user_id))
 
     await state.clear()
-
+    
 # Фоновая публикация поста (устойчивая к перезапускам)
 async def publish_task(task, user_id):
     while True:
