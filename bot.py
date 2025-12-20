@@ -372,14 +372,16 @@ async def process_time(message: types.Message, state: FSMContext):
 
     await state.clear()
 
-# Фоновая публикация поста
+# Фоновая публикация поста (устойчивая к перезапускам)
 async def publish_task(task, user_id):
-    dt = task["time"]
-    now = datetime.now(moscow_tz)
-    delay = max(0, int((dt - now).total_seconds()))
-    
-    if delay > 0:
-        await asyncio.sleep(delay)
+    while True:
+        dt = task["time"]
+        now = datetime.now(moscow_tz)
+        delay = int((dt - now).total_seconds())
+        if delay <= 0:
+            break  # Время пришло или прошло — публикуем
+        # Спим по 60 секунд, чтобы часто проверять время (устойчивость к перезапускам)
+        await asyncio.sleep(min(delay, 60))
 
     channel = get_user_channel(user_id)
     try:
@@ -387,12 +389,12 @@ async def publish_task(task, user_id):
         link = f"https://t.me/c/{str(channel)[4:]}/{sent.message_id}"
         await bot.send_message(user_id, f"Пост опубликован!\n{link}\nВремя: {dt.strftime('%H:%M %d.%m.%Y')} МСК")
     except Exception as e:
-        await bot.send_message(user_id, f"Ошибка публикации: {e}")
+        await bot.send_message(user_id, f"Ошибка публикации поста: {e}")
 
+    # Удаление из очереди после публикации
     if user_id in scheduled_tasks and task in scheduled_tasks[user_id]:
         scheduled_tasks[user_id].remove(task)
         await save_state()
-
 # Обработка кнопок
 @dp.callback_query(lambda c: c.data and c.data.startswith(('pub_', 'can_', 'chg_')))
 async def callback_buttons(callback: types.CallbackQuery):
