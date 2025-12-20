@@ -182,29 +182,23 @@ async def cmd_now(message: types.Message, state: FSMContext):
     await message.answer(f"Пост опубликован сразу!\n{link}")
     await state.clear()
 
-# Объединённая обработка постов и времени (без полного FSM для стабильности)
+# Приём поста
 @dp.message()
-async def handle_message(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
+async def receive_post(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    if "post" in data:
+        await process_time(message, state)
+        return
 
-    # Команды обрабатываются отдельно
     if message.text and message.text.startswith('/'):
         return
 
-    # Если в данных есть сохранённый пост — это указание времени
-    data = await state.get_data()
-    if "pending_post" in data:
-        pending_post = data["pending_post"]
-        await process_time_logic(message, pending_post, user_id)
-        await state.clear()
-        return
-
-    # Обычный пост — сохраняем и просим время
+    user_id = message.from_user.id
     if len(scheduled_tasks.get(user_id, [])) >= 20:
         await message.answer("Очередь полная (максимум 20 постов)")
         return
 
-    await state.update_data(pending_post=message)
+    await state.update_data(post=message)
 
     preview = message.text or message.caption or "[медиа]"
     if len(preview) > 40:
